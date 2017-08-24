@@ -1,0 +1,296 @@
+---
+title: "Data Analysis and Preprocessing"
+output: html_notebook
+---
+
+
+
+
+# load data (working) 
+
+```{r}
+
+
+# Load packages and data
+packages <- c("jsonlite", "dplyr", "purrr")
+purrr::walk(packages, library, character.only = TRUE, warn.conflicts = FALSE)
+
+raw_train  <- fromJSON("../Data/train.json") 
+raw_test  <- fromJSON("../Data/test.json") 
+
+# unlist every variable except `photos` and `features` and convert to tibble
+vars <- setdiff(names(raw_train), c("photos", "features"))
+data <- map_at(raw_train, vars, unlist) %>% tibble::as_tibble(.)
+
+test <- map_at(raw_test, vars, unlist) %>% tibble::as_tibble(.)
+```
+
+
+# summary
+
+```{r}
+head(data, n=1)
+#summary(data)
+summary(data[ setdiff(names(data),c("photos", "features"))] )
+#data$features[1:10]
+data$display_address[1:10]
+data$street_address[1:10]
+table(data$interest_level)
+
+```
+
+## key points:
+
+1. In the data data: "photos" and "features" -> These are lists seperated by comma(,) .    
+2. The features var of each data point is a *list of features* of the apt. Ex: "Doorman"             "Elevator"            "Fitness Center"   "Laundry in Building"    n     
+
+> Features var : need to see how many total unique features it makes. And maybe we can conver these unique features into variable each.
+
+3. Description on the other hand is a summary of the apt in text. It needs nlp for processing(but "features", "bathroom", "bedroom" variables already has some of this information given in this summary.). It would be intresting to find out if "description" variable has more information then this.         
+
+> An intresting feature would be the length of the description.             
+
+4. There are a total of 13 variables other than photos, features and description columns.     
+5. listing_id, building_id may not have a meaning.     
+6. interest_level is the target variable.    
+7. Created var is the DATE on which the listing was posted.     
+
+> An intresting feature would be This can be split in to year, month, etc        
+
+8. Manager_id may have a meaning: Not Sure. Need to check correlations. can be converted into intresting feature. Some managers make better postings. 
+
+9. There are two addresses: display_address and street_address. ( how are they different?)  
+They both are similar. Street address has block/apt number too. And different users have different formats. For example: some ppl write east as EAST, others just use E. similarly street(st) too.
+
+10. Price, bedrooms, bathrooms make good features. But for bedrooms and bathrooms 50 percent(IQR) of the data makes 1 bathrooms and (1-2)bedrooms.    
+
+11. Latitude and longitude : They gives very important information which is the location. A must in real estate. Different areas have different demands.But can the latitude and longitude as such directy be used. Would'nt it be better if we convert them into better features.  
+
+> One such feature is City / Area Name / (?URBAN/?SUBURBAN/?) / how far from center of the city is a better feature / Distance from school or colleges / nearby companies / crime rate / nearby shopping malls etc
+
+
+## Final feature set:
+
+1. Ignore: listing_id, building_id
+
+2. direct variables: price, bedrooms, bathrooms
+
+3. date: split: year/month/day/
+
+4. features: compute a set for the features variable and use it for.
+
+5. Street Address + display Address + lattitude longitude (how to formulate this)
+   ( can convert lat and long to zip code)
+
+6. Convert features var unique values to different variables. ()
+
+
+
+
+# data preprocessing:
+
+
+## split date-time to : Year,month
+
+
+```{r}
+library(tidyr)
+data = separate(data, created, into= c("year", "month", "date"), convert= TRUE)
+test = separate(test, created, into= c("year", "month", "date"), convert= TRUE)
+```
+
+
+
+## Target Categorical strings to numerical:
+High  2
+medium 1
+low 0
+
+```{r}
+data$target = c(1:nrow(data))
+data$target[data$interest_level == "high"] = 2
+data$target[data$interest_level == "medium"] = 1
+data$target[data$interest_level == "low"] = 0
+
+```
+
+
+
+## Extract zipcodes (to be processed in python in batches)
+
+Write lat, lon, listing_id to a csv ( to use geocoding in python ):
+```{r}
+
+write.table( data[c("listing_id", "street_address", "latitude", "longitude")],'../Data/lat_long.csv', sep = ",")
+
+
+```
+
+
+## attaching the extracted zipcodes to the dataframe
+
+```{r}
+data$zipcode = rep(0,nrow(data))
+# extracted zipcodes with listing_id
+lat_long_zipcodes = read.csv("../Data/lat_long_zipcode_v2.csv")
+
+# posting 
+
+for(i in 1:nrow(data)){
+  listingId = data[i,]$listing_id
+data[i,]$zipcode = lat_long_zipcodes[which(lat_long_zipcodes$listing_id == listingId),]$zipcode[1]
+
+}
+
+# Convert NA zipcodes to zero
+data$zipcode[which (is.na(data$zipcode) )]=0
+```
+
+
+
+## Features variable  set: 
+
+### Extract the list of features to a vector
+```{r}
+list_of_features = c()
+for(row in data$features){
+  list_of_features = append(list_of_features, row, after = length(list_of_features))
+ 
+}
+
+list_of_features = unique(list_of_features)
+length(list_of_features)
+```
+
+
+
+### count number of features for each listing: this will be an exctracted feature
+```{r}
+data$count_features = rep(0,nrow(data))
+
+for(row in c(1:nrow(data))){
+  #print(length(row))
+  #print(row)
+  #break()
+  data$count_features[row] = length(data$features[row])
+}
+
+
+test$count_features = rep(0,nrow(test))
+
+for(row in c(1:nrow(test))){
+  #print(length(row))
+  #print(row)
+  #break()
+  test$count_features[row] = length(test$features[row])
+}
+
+```
+
+
+
+
+### Write the features list to a file:
+```{r}
+
+write.table(as.matrix(list_of_features), '../Data/list_of_features.csv', row.names=FALSE, na="",col.names=FALSE, eol = "\n")
+```
+
+
+Convert the feautres to predictors:
+```{r}
+mat = matrix(rep(0,nrow(data) * length(list_of_features)), nrow = nrow(data), ncol = length(list_of_features), dimnames = list(c(1:nrow(data)), list_of_features ))
+for(i in 1:nrow(data)){
+  no_words= length(data[i,]$features[[1]])
+  if(no_words == 0){next;}
+  for( w in 1:no_words){
+    pos = which(list_of_features == data[i,]$features[[1]][w])
+    mat[i,pos] = 1
+  }
+
+  
+}
+
+# whole data set : Not recommended.
+#final_train=cbind(data, mat)
+```
+
+
+
+
+## Photos:
+
+```{r}
+data$count_photos = rep(0,nrow(data))
+
+for(i in c(1:nrow(data))){
+  #print(length(row))
+  #print(row)
+  #break()
+  data$count_photos[i] = length(data$photos[[i]])
+}
+
+
+test$count_photos = rep(0,nrow(test))
+
+for(j in c(1:nrow(test))){
+  #print(length(row))
+  #print(row)
+  #break()
+  test$count_photos[j] = length(test$photos[[j]])
+}
+
+```
+
+
+
+# Final feature set/Data for model building:
+
+```{r}
+
+write.table(data[c("price", "bathrooms", "bedrooms", "year", "month", "date", "interest_level", "target","building_id", "manager_id", "listing_id", "latitude", "longitude", "count_features", "count_photos")], '../Data/data.csv', col.names=TRUE, quote=TRUE, row.names=FALSE, sep=",")
+
+write.table(test[c("price", "bathrooms", "bedrooms", "year", "month", "date","building_id", "manager_id","listing_id",  "latitude", "longitude", "count_features","count_photos")], '../Data/test.csv', col.names=TRUE, quote=TRUE, row.names=FALSE, sep=",")
+
+
+
+#write.table(data[c("price", "bathrooms", "bedrooms", "year", "month", #"date","interest_level","latitude","longitude","zipcode", "target")], '../Data/data.csv', quote=TRUE, col.names=TRUE, #row.names=FALSE, sep=",")
+
+#write.csv(cbind(mat,data[c("target","interest_level")]),file= '../Data/train_v3_features.csv', quote=TRUE ,  #row.names=FALSE)
+
+```
+
+
+
+
+# Analysis:
+
+## price vs interest(target)
+
+```{r}
+
+
+#library
+#library(plotly)
+
+#data
+
+
+plot(jitter(data$longitude,0.5), data$latitude, xlim=c(-74.025,-73.825), ylim=c(40.3, 41), pch=1, cex=2.5 ,col=(data$target+10) )
+
+# 3d plot
+#plot_ly(T, x = ~price, y = ~zipcode, z=~bedrooms, color = ~target, colors = c('black', 'blue', 'red'))
+
+
+# plotly
+#
+
+#plot_ly(T[T$latitude>40 & T$latitude<41 & T$longitude>(-75), ], x=~latitude, y=~longitude, color=~target, size=~bedrooms) 
+
+```
+
+
+
+
+
+##  

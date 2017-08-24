@@ -1,0 +1,389 @@
+---
+title: "Two Sigma : Rental Enquries Prediction"
+author:
+- Chandan U
+- Charan Datla
+output:
+  html_notebook: default
+  pdf_document: default
+  word_document: default
+---
+
+
+
+
+
+# Introduction:
+
+Renhop is a rental browsing site that is used to find rental listings. Very recently they have hosted a kaggle completition. The challenge was one step towards smarter use of data to sort rental listings by quality. It's a classification problem , where we are supposed to predict weather a rental listing will receive high/medium/low demand based  various features. We will aproach this problem based on intution and evidence in an empirical way.
+
+
+
+
+```{r}
+
+# load data (working) 
+# Load packages and data
+packages <- c("jsonlite", "dplyr", "purrr")
+purrr::walk(packages, library, character.only = TRUE, warn.conflicts = FALSE)
+
+raw_train  <- fromJSON("../Data/train.json") 
+
+
+```
+```{r, include=FALSE}
+# unlist every variable except `photos` and `features` and convert to tibble
+vars <- setdiff(names(raw_train), c("photos", "features"))
+data= map_at(raw_train, c("building_id"), unlist) %>% tibble::as_tibble(.)
+```
+
+
+
+
+# About the Data:
+
+The data is in the form of JSON file. We wrote small code snippets to load the data from the json into R data frame objects. 
+ > The data has fifteen attributes.    
+ > Therer are 49352 attributes.    
+
+Well we have to decide on which attributes could be usefull to us based on intuition and exploratory Data analysis. Also we will extract some new features that might improve the performance of our models. In the process we will have to handle missing values as well.
+
+
+
+
+# Data cleaning and Feature Extraction:
+
+
+## Attributes:
+
+
+
+1. In the train data: "photos" and "features" -> These are lists seperated by comma(,) .    
+2. The features var of each data point is a *list of features* of the apt.     
+  Ex: "Doorman"             "Elevator"            "Fitness Center"   "Laundry in Building"    n     
+
+ > features can be converted into a predictor: Number of Features.
+
+3. Description on the other hand is a summary of the apt in text. It needs nlp for processing(but "features", "bathroom", "bedroom" variables already has some of this information given in this summary.). It would be intresting to find out if "description" variable has more information then this.         
+
+ > An intresting feature would be the length of the "description".             
+
+4. There are a total of 13 variables other than photos, features and description columns.   
+5. listing_id, building_id may not be interesting.     
+6. interest_level is the target variable.    
+7. Created var is the DATE on which the listing was posted.         
+
+ > An intresting feature would be This can be split in to year, month, etc        
+
+8. Manager_id may have a meaning: Not Sure. Need to check correlations. can be converted into intresting feature. Some managers make better postings. 
+
+9. There are two addresses: display_address and street_address. ( how are they different?)  
+They both are similar. Street address has block/apt number too. And different users have different formats. For example: some ppl write east as EAST, others just use E. similarly street(st) too.
+
+10. Price, bedrooms, bathrooms make good features. But for bedrooms and bathrooms 50 percent(IQR) of the data makes 1 bathrooms and (1-2)bedrooms.    
+
+11. Latitude and longitude : They gives very important information which is the location. A must in real estate. Different areas have different demands.But can the latitude and longitude as such directy be used. Would'nt it be better if we convert them into better features.  
+
+ > One such feature is City / Area Name / (?URBAN/?SUBURBAN/?) / how far from center of the city is a better feature / Distance from school or colleges / nearby companies / crime rate / nearby shopping malls etc
+
+
+
+
+
+
+
+##  Target Categorical strings to numerical:
+High  2
+medium 1
+low 0
+
+```{r}
+data$target = c(1:nrow(data))
+data$target[data$interest_level == "high"] = 2
+data$target[data$interest_level == "medium"] = 1
+data$target[data$interest_level == "low"] = 0
+
+```
+
+
+## split date-time to : Year,month
+
+
+```{r}
+library(tidyr)
+data = separate(data, created, into= c("year", "month", "date"), convert= TRUE)
+```
+
+
+
+## attaching the extracted zipcodes(get_zip_code.py) to the dataframe
+
+```{r, eval=FALSE, include=FALSE}
+data$zipcode = rep(0,nrow(data))
+# extracted zipcodes with listing_id
+lat_long_zipcodes = read.csv("../Data/lat_long_zipcode_v2.csv")
+
+# posting 
+
+for(i in 1:nrow(data)){
+  listingId = data[i,]$listing_id
+  data[i,]$zipcode = lat_long_zipcodes[which(lat_long_zipcodes$listing_id == listingId),]$zipcode[1]
+  
+}
+
+
+```
+
+
+
+```{r}
+# Convert NA zipcodes to zero
+data$zipcode[which (is.na(data$zipcode) )]=0
+# remove data points with zero zipcode
+data = data[which(data$zipcode!=0),]
+```
+
+
+
+
+## split Train - Test
+
+```{r}
+smp_size <- floor(0.8 * nrow(data))
+## set the seed to make your partition reproductible
+set.seed(123)
+train_ind <- sample(seq_len(nrow(data)), size = smp_size)
+train <- data[train_ind, ]
+test <- data[-train_ind, ]
+```
+
+
+
+
+
+# Exploratory Analysis:
+
+
+
+
+
+## latitude vs longitude
+
+Since this is a new york data set, the below image clearly shows the shape of manhattan:
+
+```{r}
+library(ggplot2)
+ggplot(data = train) +
+  geom_point(aes(x = longitude, y = latitude, color =(interest_level)), alpha = 0.7) +
+  #stat_density2d(data = rentals, aes(x = longitude, y = latitude), geom = 'polygon') + 
+  #facet_grid(~interest_level_factor) +
+  ggtitle("Rental Locations Scatterplot") +
+  guides(alpha = FALSE) +
+  theme(plot.title = element_text(hjust = 0.5, face = 'bold')) +
+  #scale_fill_gradient(low = 'gray', high = 'red') +
+  xlim(-74.05, -73.8) +
+  ylim(40.6, 40.9)
+
+```
+
+## All Months show same information:
+
+The data set is focussed on three months: April, May and June. (May be its the peak time renthop gets more traffic.) But there is not much valuable information we get from month w.r.t the target.
+
+```{r}
+
+ggplot(data = train, aes(x = month) ) +
+  geom_histogram(aes(fill = interest_level))
+```
+
+
+## Low price houses have more demand in any Zipcode Area:
+
+This is not surprising but it tells us that zipcode and price can be used as predictors
+In any zipcode area, lowprice houses have higher demand.
+
+```{r}
+#plot(log(data_train$zipcode) , log(data_train$price), xlim=c(9.2, 9.4), pch=data_train$target, col=data_train$target, cex=0.8)
+
+#ggplot(log(data_train$zipcode) * log(data_train$price), data_train$bedrooms, pch=data_train$target, col=data_train$target, cex=0.8)
+
+ggplot(data = train) +
+  geom_point(aes(x = log(zipcode), y = log(price), color =(interest_level)), alpha = 1)+
+    xlim(9.2, 9.4) +
+    ylim(6, 12)
+
+
+```
+
+## An interesting observation we came across
+
+Feature1 = log(price) *  log(zipcode)  vs 
+Feature2 = (totalrooms = Bedrooms + bathrooms)
+
+In the scatterplot below you can see that most of the high demand prices exist between 60 to 70(x-axis)
+The low demand is spread towards the right. But the medium demand is blended with high and low demand points.
+
+```{r}
+ggplot(data = train) +
+  geom_point(aes(x = log(zipcode)*log(price), y=(bathrooms+bedrooms) , color =(interest_level)), alpha = 1)+
+  xlim(53,100)
+```
+
+## imbalance in the dataset
+
+```{r}
+ggplot(data=train, aes(x = factor(1), fill = factor(interest_level))) + geom_bar() + coord_polar(theta="y", start=1, direction=1 )
+```
+
+
+
+
+
+# Modeling
+
+
+
+a. Based on the analysis a good model would be, K-Nearest-Nieghbours. This is because, when you look at features such as zipcode, lattiutude and longitude, houses which belong to same area and whcih have same features such as (number of bathrooms/bedrooms etc) have more similarities in terms of demand/interest_level. 
+
+b. Also a decission tree would work well because, the dataset is higly imbalanced. Some models are not affected by imbalanced data sets. 
+
+
+
+## Decisssion Trees:
+
+We are choosing decission Trees, because this is an imbalanced data set decission trees might work well.
+
+As you can see below, the decission trees are performing okay but, the reason low accuracy is , the boundries are not clear between the classes (especially medium class and low class)
+
+```{r}
+
+library(rpart)
+require(caret)
+#fit = rpart(interest_level ~ bathrooms+bedrooms+month, data= train, method="class", minsplit =1 , minbucket=1, cp=0.001)
+
+vars = setdiff(names(train), c("photos", "features", "display_address", "street_address", "manager_id", "description", "year", "month", "date", "listing_id", "interest_level"))
+
+fit = rpart(target ~ price+bathrooms+bedrooms+zipcode+latitude+longitude, data= train[vars], method ="class",control = rpart.control(minsplit =3 , minbucket=1, cp=0.001))
+
+#train[setdiff(names, c("target", "interest_level"))]
+printcp(fit)
+#fit
+
+plot(fit)	    # look at complex tree we built
+text(fit)
+ 
+tab <- table( predict(fit, test[vars], type="class"), test$target)
+
+confusionMatrix(tab)
+
+```
+
+
+
+
+## K-Nearest-Neighbours
+
+
+### kNN with selected intutive variables
+This is the Intution: Similar houses in same neighborhood with same rental prices should have equal demand.  i.e a 2 bedroom house with rent $200 should have the same demand as any other $200, 2bedroom house in the same neighborhood( zipcode/latitude,longitude)
+
+As per intution the following variables will help us with k-means:
+1. lattitude
+2. longidude
+3. zipcode
+4. bathrooms
+5. bedrooms
+6. price
+
+We are not including month in the list because from the exploratory analysis, we know that interest levels are equally distributed accross all months.
+
+Upon many trials the best performance is occured at k=30.
+
+```{r}
+library(class)
+library(caret)
+#train.X=train[,1:5]
+#test.X=test[,1:5]
+knn.pred=knn(train[c("bathrooms", "bedrooms", "latitude", "longitude","price","zipcode")],test[c("bathrooms", "bedrooms","latitude","longitude", "price", "zipcode")],train$target,k=30)
+confusionMatrix(table(knn.pred,test$target))
+mean(knn.pred==test$target)
+
+
+```
+
+
+### kNN : applying log to price and zipcode
+
+
+We previously observed in Exploratory analysis that, the log(price) and log(zipcode) reveals some interesing insights.
+
+As you can below from the results that the accuracy has increased by three percent from previous KNN model.
+
+```{r}
+library(class)
+library(caret)
+#train.X=train[,1:5]
+#test.X=test[,1:5]
+train_1 = train
+test_1 = test
+train_1$price = log(train_1$price)
+train_1$zipcode = log(train_1$zipcode)
+test_1$price = log(test_1$price)
+test_1$zipcode = log(test_1$zipcode)
+knn.pred=knn(train_1[c("bathrooms", "bedrooms", "latitude", "longitude","price","zipcode")],test_1[c("bathrooms", "bedrooms","latitude","longitude", "price", "zipcode")],train$target,k=30)
+confusionMatrix(table(knn.pred,test$target))
+mean(knn.pred==test$target)
+
+
+```
+
+
+### Analaysis of KNN:
+
+Intutitively kNN sounds good. But there is a problem that we are overseeing again. As you can see the sensitivity of the class1(medium) and class2(high) is very low. Low sensitivity means we are not correctly classifying a majority of data points that belong to this class correctly. 
+
+There could be one possible reasons:
+1. There is no proper boundry between class 1(medium) and class0(low) 
+
+
+
+
+## XGBOOST
+
+Finally we want try a model that is highly sophisticated algorithm that is powerful enough to deal
+with all sorts of irregularities in data.If we take a closer look at why K-NN data failed all the
+medium interest group have been spread across the low interest group.Hence medium interest group
+has become very difficult to predict as their behaviour is random. As XG boost gives boosting to
+misclassified data,In K-NN we have observed that medium interest and high interest groups are highly missclassified,And in an intution that their weights get boosted and then can be classified more appropriatly after an good number of iterations.
+
+
+Please find the XGBoost code in XGBoost.r file
+
+The gave 
+
+
+# Conclusion
+
+1. Both the decission Tree and the KNN algorithm performed with same accuracy. Both have less specificity. The reason it's an imbalanced data set. IT would be advanatigous to use stratified sampling. In the script_classify.rmd we have included the stratified trained model outputs. Apparently they have shown increased performance. One more alternative is to get more data.     
+
+2. Also there is no boundry lines between medium class and low class which makes the problem challenging. Both are blended together.     
+
+3. Hence we have applied XGBoost which though gave a performance of 67 percent accuracy on the test set, still managed with more specificity.    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

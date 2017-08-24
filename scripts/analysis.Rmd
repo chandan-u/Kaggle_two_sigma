@@ -1,0 +1,146 @@
+e---
+title: "analysis"
+output: html_notebook
+---
+
+
+
+
+# split train into train and validation
+
+```{r}
+
+data = read.csv("../Data/data.csv")
+test = read.csv("../Data/test.csv")
+
+smp_size <- floor(0.8 * nrow(data))
+## set the seed to make your partition reproductible
+set.seed(123)
+train_ind <- sample(seq_len(nrow(data)), size = smp_size)
+train <- data[train_ind, ]
+validation <- data[-train_ind, ]
+```
+
+
+
+# analysis
+
+## lattitude , longitude plot
+
+
+```{r}
+library(ggplot2)
+
+
+ggplot(data = data) +
+  geom_point(aes(x = latitude, y = longitude, color =(interest_level)), alpha = 1)+
+    xlim(40.5, 41.0) +
+    ylim(-74.05, -73.75)
+
+
+ggplot(data = data[data["interest_level"] == "low",]) +
+  geom_point(aes(x = latitude, y = longitude), alpha = 1)+
+    xlim(40.5, 41.0) +
+    ylim(-74.05, -73.75)
+
+ggplot(data = data[data["interest_level"] == "medium",]) +
+  geom_point(aes(x = latitude, y = longitude), alpha = 1)+
+    xlim(40.5, 41.0) +
+    ylim(-74.05, -73.75)
+
+ggplot(data = data[data["interest_level"] == "high",]) +
+  geom_point(aes(x = latitude, y = longitude), alpha = 1)+
+    xlim(40.5, 41.0) +
+    ylim(-74.05, -73.75)
+
+
+```
+
+
+
+
+## lattitude, longitude and 
+
+
+```{r}
+library(plotly)
+
+p <- plot_ly(data[data$longitude > -74 & data$longitude < -73.9 & data$price < 20000,], x = ~latitude, y = ~longitude, z = ~price, color = ~interest_level, colors = c('#BF382A', '#0C4B8E', "#F0E442")) %>%
+  add_markers() %>%
+  layout(list(   
+         xaxis = list( range =c(40, 41), autorange = F),
+         yaxis = list( range = c(-74, -73), autorange = F)
+         
+         
+           
+        ))
+p
+```
+
+
+
+
+
+
+```{r}
+# transforming lattitude by a factor of the target
+library(plotly)
+
+p <- plot_ly(data[data$longitude > -74 & data$longitude < -73.9 & data$price < 20000,], x = ~latitude*(target+1), y = ~longitude, z = ~price, color = ~interest_level, colors = c('#BF382A', '#0C4B8E', "#F0E442")) %>%
+  add_markers() %>%
+  layout(list(   
+         xaxis = list( range =c(40, 41), autorange = F),
+         yaxis = list( range = c(-74, -73), autorange = F)
+       ))
+p
+```
+
+
+
+```{r}
+
+plot_ly(data[data$longitude > -74 & data$longitude < -73.9 & data$price < 20000,], y=~price*(longitude/latitude)*bedrooms, x=c(1:nrow(data[data$longitude > -74 & data$longitude < -73.9 & data$price < 20000,])), color= ~interest_level, colors = c('#BF382A', '#0C4B8E', "#F0E442")) %>%
+
+       layout(list(   
+         xaxis = list( range =c(40, 41), autorange = F),
+         yaxis = list( range = c(-74, -73), autorange = F)
+       ))
+```
+
+
+
+
+
+```{r}
+#fit1 <- density(data$price[data$target == 2])
+#fit2 <- density(data$price[data$target == 1])
+
+#plot_ly(x = data$price, type = "histogram", name = "Histogram") %>% 
+#  add_trace(x = fit1$x, y = fit1$y, mode = "lines", fill = "tozeroy", yaxis = "y2", name = "Density_high") %>% 
+#  add_trace(x = fit2$x, y = fit2$y, mode = "lines", fill = "tozeroy", yaxis = "y2", name = "Density_meidum") %>% 
+#  layout(yaxis2 = list(overlaying = "y", side = "right"))
+
+
+#hist(data$price[data$target == 2 & data$price < 20000])
+#hist(data$price[data$target == 1 & data$price < 20000])
+#hist(log(data$price[data$target == 0 & data$price < 20000]))
+
+
+
+plot_ly(alpha = 0.6) %>%
+  add_histogram(x = ~data$price[data$target == 2 & data$price < 20000]) %>%
+  add_histogram(x = ~data$price[data$target == 1 & data$price < 20000] ) %>%
+  add_histogram(x = ~data$price[data$target == 0 & data$price < 20000] ) %>%
+  layout(barmode = "overlay")
+
+
+```
+
+
+
+
+
+```{r}
+
+```
+

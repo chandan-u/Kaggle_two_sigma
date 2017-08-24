@@ -1,0 +1,216 @@
+---
+title: "script_classify"
+output: html_notebook
+---
+
+
+
+# split train into train and validation
+
+```{r}
+
+data = read.csv("../Data/data.csv")
+test = read.csv("../Data/test.csv")
+
+smp_size <- floor(0.8 * nrow(data))
+## set the seed to make your partition reproductible
+set.seed(123)
+train_ind <- sample(seq_len(nrow(data)), size = smp_size)
+train <- data[train_ind, ]
+validation <- data[-train_ind, ]
+```
+
+
+
+# simlpe imbalance view:
+
+```{r}
+table(train$target)
+table(validation$target)
+```
+
+
+
+# Decission Trees:
+
+## interest_level ~ price+bathrooms+bedrooms
+```{r}
+library(rpart)
+library(caret)
+var = c("latitude", "longitude","price","count_features", "bedrooms","bathrooms")
+
+#fit = rpart(interest_level ~ bathrooms+bedrooms, data= train, method="class", minsplit =1 , minbucket=1, cp=0.001)
+#train[setdiff(names, c("target", "interest_level"))]
+
+
+fit = rpart(train$interest_level ~ ., data= train[var], method ="class",control = rpart.control(minsplit =5 , minbucket=1, cp=0.001))
+
+pred <- predict(fit, validation[var], type="class")
+printcp(fit)
+plot(fit)	    # look at complex tree we built
+text(fit)
+
+pred <- predict(fit, test[var], type="prob")
+
+write.csv(file = "../Data/submissions/tree_1.csv", x = cbind(test$listing_id, pred), quote=FALSE, row.names=FALSE)
+
+```
+
+
+
+
+
+
+
+## Stratified Sampling :::: interest_level ~ price+bathrooms+bedrooms+latitude+longitude
+```{r}
+require(sampling)
+
+# order the data based on target for strata
+#data_train = data_train[order(data_train$target),]
+
+# stratified sampling
+#strat_train = strata(data_train, c("target"),size=c(2000,2000,2000), method="srswor")$ID_unit
+#test = strata(data_train, c("target"),size=c(100,100,10,4,6), method="srswor")
+
+#fit = rpart(interest_level ~ bathrooms+bedrooms+month, data= train, method="class", minsplit =1 , minbucket=1, cp=0.001)
+
+fit = rpart(target ~ price+bathrooms+bedrooms+month+latitude+longitude, data=data_train[strat_train,], method ="class",control = rpart.control(minsplit =3 , minbucket=1, cp=0.001))
+
+#train[setdiff(names, c("target", "interest_level"))]
+printcp(fit)
+#fit
+
+plot(fit)	    # look at complex tree we built
+text(fit)
+
+#prune(fit, cp=0.0065000) 
+
+tab <- table( predict(fit, data_test[c("price","bathrooms","bedrooms","month","latitude", "longitude")], type="class"), data_test$target)
+confusionMatrix(tab)
+
+#length(which(predict(fit, data_test[c("price","bathrooms","bedrooms","month","latitude", "longitude","zipcode")], type="class") ==data_test$target ))/nrow(data_test)
+
+```
+
+
+
+
+# random Forest
+
+```{r}
+library("randomForest")
+
+fit <- randomForest(as.factor(train$interest_level) ~ .,
+                      data=train[var], 
+                      importance=TRUE, 
+                      ntree=2000)
+
+#varImpPlot(fit)
+#tab<-table(predict(fit, train[var], type="class"), train$interest_level)
+#confusionMatrix(tab)
+#tab<-table(predict(fit, validation[var], type="class"), validation$interest_level)
+#confusionMatrix(tab)
+
+```
+
+
+```{r}
+pred <- predict(fit, test[var], type = "prob")
+write.csv(file = "../Data/submissions/randomTree_1.csv", x = cbind(test$listing_id, pred), quote=FALSE, row.names=FALSE)
+
+
+```
+
+
+
+
+
+
+# party 
+
+
+```{r}
+library(party)
+library(caret)
+var = c("latitude", "longitude","price","count_features", "bedrooms","bathrooms")
+
+fit <- cforest(as.factor(train$interest_level) ~ .,
+                      data=train[var], 
+                      controls=cforest_unbiased(ntree=2000, mtry=3))
+varImpPlot(fit)
+tab<-table(predict(fit, train[var], type="class"), train$interest_level)
+confusionMatrix(tab)
+tab<-table(predict(fit, validation[var], type="class"), validation$interest_level)
+confusionMatrix(tab)
+#pred <- predict(fit, test[var], type = "prob")
+#write.csv(file = "../Data/submissions/randomTree_1.csv", x = cbind(test$listing_id, pred), quote=FALSE, row.names=FALSE)
+```
+
+
+
+# knn
+
+Inspired from the concept of kNN:
+
+
+```{r}
+library(class)
+library(caret)
+
+knn.pred=knn(train[c("latitude", "longitude","price","count_features", "bedrooms", "bathrooms")],validation[c("latitude","longitude", "price", "count_features", "bedrooms", "bathrooms")],train$target,k=30)
+confusionMatrix(table(knn.pred,validation$target))
+mean(knn.pred==validation$target)
+
+
+```
+
+
+
+
+```{r}
+library(class)
+library(caret)
+
+var = c("latitude", "longitude","price","count_features", "bedrooms","bathrooms")
+knn.pred=knn(data[c("latitude", "longitude","price","count_features", "bedrooms","bathrooms")],test[c("latitude","longitude", "price", "count_features", "bedrooms","bathrooms")],data$target,k=10,use.all = TRUE)
+#attr(knn.pred,"prob")
+#confusionMatrix(table(knn.pred,te))
+#mean(knn.pred==validation$target)
+#attributes(.Last.value)
+
+
+ 
+
+submission = data.frame(listing_id = test$listing_id, low = rep(0, nrow(test)),medium = rep(0, nrow(test)),high = rep(0,nrow(test)) )
+
+
+
+for(i in c(1:length(knn.pred))){
+  if(knn.pred[i] == 2){submission$high[i] =1 }
+  else if(knn.pred[i] == 0){submission$low[i] =1 }
+  else {submission$medium[i] = 1  }
+  
+}
+
+write.csv(file = "./Data/submissions/knn_10_submission.csv", x = submission, quote=FALSE, row.names=FALSE)
+```
+
+
+```{r}
+submission = data.frame(listing_id = test$listing_id, low = rep(0, nrow(test)),medium = rep(0, nrow(test)),high = rep(0,nrow(test)) )
+
+var = c("latitude", "longitude","price","count_features", "bedrooms","bathrooms")
+k = 4
+for(i in c(1:nrow(test))){
+  
+  distances = apply(data[var], 1, function(x) sqrt(sum((x - test[var][i,]) ^ 2)) )
+  nearset = order(dist, decreasing = TRUE)[1:k]
+  #as.vector(table(data$target[nearset])) 
+  submission$low[i] = length(which(data$target[nearset] == 0))/k
+  submission$medium[i] = length(which(data$target[nearset] == 1))/k
+  submission$high[i] = length(which(data$target[nearset] == 2))/k
+}
+
+```
+
